@@ -21,6 +21,7 @@ license = {text = "MIT"}
 dev = [
     "jupyter>=1.0.0",
     "matplotlib>=3.7.0",
+    "ipykernel",
 ]
 
 [build-system]
