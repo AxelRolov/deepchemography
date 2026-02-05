@@ -1,13 +1,14 @@
 """
 Utility functions for training scripts.
 """
+
 import argparse
-import random
 import re
-import numpy as np
+
 import pandas as pd
 import torch
-from deepchemography.utils import setup_logging
+
+from deepchemography.shared import setup_logging, set_seed
 
 logger = setup_logging()
 
@@ -48,7 +49,7 @@ def add_train_args(parser):
     parser.add_argument('--train_load',
                         type=str,
                         help='Input data in csv format to train')
-    parser.add_argument('--val_load', 
+    parser.add_argument('--val_load',
                         type=str,
                         help='Input data in csv format for validation')
     parser.add_argument('--model_save',
@@ -72,10 +73,10 @@ def add_train_args(parser):
 def read_smiles_csv(path):
     """
     Read SMILES strings from a CSV file.
-    
+
     Args:
         path: path to CSV file with 'SMILES' column
-        
+
     Returns:
         list of SMILES strings
     """
@@ -86,19 +87,10 @@ def read_smiles_csv(path):
         # If only one column, assume it's SMILES
         smiles = df.iloc[:, 0].squeeze().astype(str).tolist()
     else:
-        raise ValueError(f"CSV file must have a 'SMILES' column or only one column")
-    
+        raise ValueError("CSV file must have a 'SMILES' column or only one column")
+
     return smiles
 
 
-def set_seed(seed):
-    """Set random seed for reproducibility."""
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    logger.info(f"Random seed set to: {seed}")
-
-
+# Re-export set_seed for backward compatibility during transition
+__all__ = ['torch_device', 'add_common_args', 'add_train_args', 'read_smiles_csv', 'set_seed']
