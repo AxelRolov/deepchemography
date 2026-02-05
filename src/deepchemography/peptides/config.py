@@ -26,7 +26,6 @@ DEFAULT_CONFIG = {
 
     # Decoder config
     'decoder': {
-        'G_class': 'gru',
         'p_word_dropout': 0.3,
         'p_out_dropout': 0.3,
         'skip_connections': False,

@@ -95,3 +95,8 @@ This approach works because:
 - The architecture must be compatible between ChemEidos and deepchemography
 - The vocabulary must use the same format (character-based or SELFIES)
 
+
+
+
+
+
