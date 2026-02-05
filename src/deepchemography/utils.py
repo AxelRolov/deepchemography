@@ -9,6 +9,6 @@ from deepchemography.shared import *
 from deepchemography.shared import Logger, setup_logging, set_seed
 
 # Import vocab classes for backward compatibility with pickled vocab files
-from deepchemography.smiles import OneHotVocab, CharVocab
+from deepchemography.smiles import OneHotVocab, CharVocab, SpecialTokens
 
-__all__ = ['Logger', 'setup_logging', 'set_seed', 'OneHotVocab', 'CharVocab']
+__all__ = ['Logger', 'setup_logging', 'set_seed', 'OneHotVocab', 'CharVocab', 'SpecialTokens']
