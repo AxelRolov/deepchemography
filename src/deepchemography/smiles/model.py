@@ -267,7 +267,7 @@ class LSTMAutoencoder(nn.Module):
         with torch.no_grad():
             return self.forward_encoder(x)
 
-    def sample(self, n_batch, max_len=100, z=None, temp=1.0, decode='greedy'):
+    def sample(self, n_batch, max_len=100, z=None, temp=1.0, decode='sample'):
         """Generate samples from latent representation
 
         :param n_batch: number of sentences to generate
@@ -340,5 +340,10 @@ class LSTMAutoencoder(nn.Module):
                 new_x.append(x[i, :end_pads[i]])
 
             return [self.tensor2string(i_x) for i_x in new_x]
+
+
+
+
+
 
 
