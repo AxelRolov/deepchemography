@@ -6,7 +6,7 @@ This script loads models that were trained with ChemEidos and resaves them
 using the deepchemography codebase without any retraining.
 
 Usage:
-    pdm run python scripts/convert_model.py --source models/autoencoder_v1 --output models/autoencoder_converted
+    uv run python scripts/convert_model.py --source models/autoencoder_v1 --output models/autoencoder_converted
 """
 
 import argparse

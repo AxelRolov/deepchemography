@@ -9,7 +9,7 @@ The training script is located at `scripts/train_autoencoder.py`. Here's how to 
 ### Basic Usage
 
 ```bash
-pdm run python scripts/train_autoencoder.py \
+uv run python scripts/train_autoencoder.py \
     --train_load data/train.csv \
     --val_load data/test.csv \
     --model_save models/my_model/model.pt \
@@ -32,7 +32,7 @@ CN1C=NC2=C1C(=O)N(C(=O)N2C)C
 ### Recommended Settings (High Accuracy)
 
 ```bash
-pdm run python scripts/train_autoencoder.py \
+uv run python scripts/train_autoencoder.py \
     --train_load ../ChemEidos/data/train.csv \
     --val_load ../ChemEidos/data/test.csv \
     --model_save models/optimal_autoencoder/model.pt \
@@ -75,14 +75,14 @@ After training, you'll find:
 To see all available options:
 
 ```bash
-pdm run python scripts/train_autoencoder.py --help
+uv run python scripts/train_autoencoder.py --help
 ```
 
 ### Example: Training with Custom Settings
 
 ```bash
 # Smaller model for faster training/testing
-pdm run python scripts/train_autoencoder.py \
+uv run python scripts/train_autoencoder.py \
     --train_load data/train.csv \
     --val_load data/test.csv \
     --model_save models/test/model.pt \

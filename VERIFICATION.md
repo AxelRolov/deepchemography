@@ -78,7 +78,7 @@ This document verifies that only the necessary code for LSTM autoencoder functio
 
 #### `pyproject.toml`
 - **Purpose**: Package configuration and dependencies
-- **Necessary**: ✅ Required for installation with pdm/pip
+- **Necessary**: ✅ Required for installation with uv/pip
 
 ## NOT Copied (Intentionally Excluded)
 
