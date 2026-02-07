@@ -60,8 +60,8 @@ The LSTM Autoencoder follows the optimal architecture from research by Xu et al.
 # Clone the repository
 cd /data/aorlov/deepchemography
 
-# Install dependencies (using pdm)
-pdm add torch numpy pandas tqdm rdkit
+# Install dependencies (using uv)
+uv sync
 
 # Or install with pip
 pip install torch numpy pandas tqdm rdkit

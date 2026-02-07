@@ -8,7 +8,7 @@ This guide explains how to train the LSTM autoencoder model on SMILES molecular 
 
 ```bash
 # From the project root
-pdm run python scripts/train_autoencoder.py \
+uv run python scripts/train_autoencoder.py \
     --train_load data/train.csv \
     --val_load data/test.csv \
     --model_save models/autoencoder_v1/model.pt \
@@ -20,7 +20,7 @@ pdm run python scripts/train_autoencoder.py \
 ### Optimal Architecture (99.71% reconstruction accuracy)
 
 ```bash
-pdm run python scripts/train_autoencoder.py \
+uv run python scripts/train_autoencoder.py \
     --train_load data/train.csv \
     --val_load data/test.csv \
     --model_save models/autoencoder_v1/model.pt \
@@ -98,7 +98,7 @@ After training, you'll get:
 ## Example: Training on ChEMBL Data
 
 ```bash
-pdm run python scripts/train_autoencoder.py \
+uv run python scripts/train_autoencoder.py \
     --train_load ../ChemEidos/data/train.csv \
     --val_load ../ChemEidos/data/test.csv \
     --model_save models/autoencoder_optimal/model.pt \
