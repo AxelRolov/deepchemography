@@ -1,0 +1,25 @@
+
+GTM Analysis Summary
+====================
+
+Configuration:
+- Number of nodes: 225
+- Number of basis functions: 100
+- Regularization: 100
+- Basis width: 1
+- Maximum iterations: 200
+
+WAE Results:
+- Dataset size: 10000
+- Latent dimension: 100
+- Average log-likelihood: -134.3700
+- Number of modes: 23
+
+Output Files:
+- GTM model: gtm_wae_model.pkl
+- Embeddings: embeddings_wae.npz
+- Analysis DataFrame: gtm_analysis_wae.csv
+- Visualizations: *.png, *.html
+- Mode information: gtm_modes.json
+
+Results saved to: /data/aorlov/deepchemography/output/sampling_analysis/peptides_gtm_analysis
