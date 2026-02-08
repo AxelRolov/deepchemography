@@ -17,6 +17,20 @@ from deepchemography.smiles import (
     get_parser,
 )
 
+# SMILES WAE
+from deepchemography.smiles import (
+    SmilesWAE,
+    SmilesWAETrainer,
+    get_default_wae_config,
+    load_smiles_wae,
+    encode_smiles,
+    decode_smiles_latent,
+    sample_smiles,
+    interpolate_smiles,
+    reconstruct_smiles,
+    explore_smiles_neighborhood,
+)
+
 # Peptide WAE
 from deepchemography.peptides import (
     PeptideWAE,
@@ -44,12 +58,23 @@ from deepchemography.script_utils import (
 )
 
 __all__ = [
-    # SMILES
+    # SMILES LSTM autoencoder
     'LSTMAutoencoder',
     'AutoencoderTrainer',
     'OneHotVocab',
     'CharVocab',
     'get_parser',
+    # SMILES WAE
+    'SmilesWAE',
+    'SmilesWAETrainer',
+    'get_default_wae_config',
+    'load_smiles_wae',
+    'encode_smiles',
+    'decode_smiles_latent',
+    'sample_smiles',
+    'interpolate_smiles',
+    'reconstruct_smiles',
+    'explore_smiles_neighborhood',
     # Peptides
     'PeptideWAE',
     'PeptideVocab',
