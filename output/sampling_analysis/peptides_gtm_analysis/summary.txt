@@ -3,17 +3,17 @@ GTM Analysis Summary
 ====================
 
 Configuration:
-- Number of nodes: 225
+- Number of nodes: 900
 - Number of basis functions: 100
 - Regularization: 100
 - Basis width: 1
 - Maximum iterations: 200
 
 WAE Results:
-- Dataset size: 10000
+- Dataset size: 50000
 - Latent dimension: 100
-- Average log-likelihood: -134.3700
-- Number of modes: 23
+- Average log-likelihood: -133.4548
+- Number of modes: 90
 
 Output Files:
 - GTM model: gtm_wae_model.pkl
