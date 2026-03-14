@@ -3,7 +3,28 @@ name = "deepchemography"
 version = "0.2.0"
 description = "Deep learning autoencoders for molecular sequences (SMILES and peptides)"
 authors = [
-    {name = "Alexander Orlov", email = "aorlov@example.com"},
+    {name = "Alexander Orlov", email = "AxelRolov@users.noreply.github.com"},
+]
+keywords = [
+    "deep-learning",
+    "molecular-generation",
+    "SMILES",
+    "autoencoder",
+    "peptides",
+    "chemoinformatics",
+    "drug-discovery",
+    "wasserstein-autoencoder",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
     "torch",
@@ -27,6 +48,11 @@ dev = [
     "ipykernel",
     "pytest>=7.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/AxelRolov/deepchemography"
+Repository = "https://github.com/AxelRolov/deepchemography"
+Issues = "https://github.com/AxelRolov/deepchemography/issues"
 
 [build-system]
 requires = ["hatchling"]

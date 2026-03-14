@@ -1,192 +1,198 @@
 # DeepChemography
 
-LSTM Autoencoder for SMILES molecular representations - extracted from ChemEidos project.
+Deep learning autoencoders for molecular sequence encoding and generation.
+
+![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![CI](https://github.com/AxelRolov/deepchemography/actions/workflows/ci.yml/badge.svg)
 
 ## Overview
 
-This repository contains a trained LSTM autoencoder specifically designed for encoding and sampling SMILES (Simplified Molecular Input Line Entry System) molecular representations. The model achieves 99.71% reconstruction accuracy.
+DeepChemography provides three autoencoder architectures for learning latent representations of molecular sequences — small-molecule SMILES strings and peptide amino acid sequences. It supplies the generative deep learning components used in the [ChemSpace Copilot](https://doi.org/10.26434/chemrxiv.15000527/v1) agentic AI framework for interactive visualization and exploration of chemical space.
 
-## Project Structure
+## Highlights
 
-```
-deepchemography/
-├── src/
-│   └── deepchemography/
-│       ├── __init__.py
-│       ├── utils.py              # Vocabulary and tokenization utilities
-│       └── autoencoder/
-│           ├── __init__.py
-│           ├── model.py          # LSTMAutoencoder implementation
-│           └── config.py         # Configuration parser
-├── models/
-│   └── autoencoder_v1/           # Trained model checkpoints
-│       ├── config.pt             # Model configuration
-│       ├── vocab.pt              # Character vocabulary
-│       ├── model_best.pt         # Best model weights
-│       └── training.log          # Training metrics
-├── notebooks/
-│   └── autoencoder_example.ipynb # Example usage notebook
-└── README.md
-```
+- **Three autoencoder models**: LSTM autoencoder, SMILES WAE, and Peptide WAE
+- **99.71% reconstruction accuracy** on the SMILES LSTM autoencoder
+- **High-level functional APIs** for encoding, decoding, sampling, interpolation, and neighborhood exploration
+- **Shared loss functions** (MMD with gaussian/laplace/energy kernels, KL divergence)
+- **Training infrastructure** with learning rate scheduling, gradient clipping, early stopping, and checkpointing
+- **Pretrained SMILES LSTM checkpoint** included (`models/autoencoder_v1/`)
 
-## Architecture
+## Models
 
-The LSTM Autoencoder follows the optimal architecture from research by Xu et al. (2017):
-
-### Encoder
-- **Type**: Bidirectional LSTM
-- **Layers**: 2
-- **Hidden units**: 128 per direction (256 total)
-- **Output**: Concatenated hidden (h) and cell (c) states from all layers → 1024 units
-
-### Bottleneck
-- **Latent dimension**: 256 units
-- **Compression**: 1024 → 256 (4× compression)
-
-### Decoder
-- **Type**: Unidirectional LSTM
-- **Layers**: 2
-- **Hidden units**: 256 per layer
-- **Initialization**: Latent vector decoded by four parallel dense layers to form initial states
-
-### Key Features
-- **Batch Normalization**: Crucial for reaching high reconstruction accuracy
-- **Teacher Forcing**: Used during training
-- **Expected Performance**: 99.71% reconstruction accuracy
+| Model | Architecture | Latent dim | Input | Loss |
+|---|---|---|---|---|
+| `LSTMAutoencoder` | Bidirectional LSTM | 256 | SMILES (char-level) | Reconstruction |
+| `SmilesWAE` | Bidirectional GRU | 128 | SMILES (char-level) | Recon + MMD |
+| `PeptideWAE` | Bidirectional GRU | 100 | Peptides (token-level) | Recon + MMD |
 
 ## Installation
 
 ```bash
-# Clone the repository
-cd /data/aorlov/deepchemography
-
-# Install dependencies (using uv)
+# From source (recommended)
+git clone https://github.com/AxelRolov/deepchemography.git
+cd deepchemography
 uv sync
 
-# Or install with pip
-pip install torch numpy pandas tqdm rdkit
+# Or with pip
+pip install -e .
+
+# Dev extras (pytest, jupyter, matplotlib)
+uv sync --extra dev
 ```
 
+Requires Python >= 3.11.
+
 ## Quick Start
+
+### SMILES LSTM Autoencoder
 
 ```python
 import torch
 from pathlib import Path
 from deepchemography import LSTMAutoencoder
 
-# Load model
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = Path('models/autoencoder_v1')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model_dir = Path("models/autoencoder_v1")
 
-config = torch.load(model_dir / 'config.pt', weights_only=False)
-vocab = torch.load(model_dir / 'vocab.pt', weights_only=False)
-model_state = torch.load(model_dir / 'model_best.pt', weights_only=False)
+config = torch.load(model_dir / "config.pt", weights_only=False)
+vocab = torch.load(model_dir / "vocab.pt", weights_only=False)
+state = torch.load(model_dir / "model_best.pt", weights_only=False)
 
 model = LSTMAutoencoder(vocab, config)
-model.load_state_dict(model_state)
-model = model.to(device)
-model.eval()
+model.load_state_dict(state)
+model.to(device).eval()
 
-# Encode SMILES to latent vector
 smiles = "CC(=O)Oc1ccccc1C(=O)O"  # Aspirin
 tensor = model.string2tensor(smiles, device=device)
 z = model.forward_encoder([tensor])
-
-# Decode latent vector back to SMILES
-reconstructed = model.sample(n_batch=1, z=z, temp=0.1, decode='greedy')
-print(f"Original:      {smiles}")
-print(f"Reconstructed: {reconstructed[0]}")
+reconstructed = model.sample(n_batch=1, z=z, temp=0.1, decode="greedy")
+print(reconstructed[0])
 ```
 
-## Usage Examples
-
-See the [example notebook](notebooks/autoencoder_example.ipynb) for comprehensive demonstrations:
-
-1. **Loading the model**: Load trained autoencoder with configuration and vocabulary
-2. **Encoding SMILES**: Convert molecular structures to latent vectors
-3. **Reconstruction**: Encode and decode molecules (encode → decode)
-4. **Sampling**: Generate novel molecules from Gaussian prior
-5. **Interpolation**: Smoothly transition between molecules in latent space
-6. **Neighborhood exploration**: Generate similar molecules by adding noise
-
-## Key Functions
-
-### encode_smiles(smiles_list, model, batch_size=32)
-Encode a list of SMILES strings to latent vectors.
+### SMILES WAE
 
 ```python
-latent_vectors = encode_smiles(
-    ["CC(=O)Oc1ccccc1C(=O)O", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"],
-    model,
-    batch_size=32
-)
-# Returns: numpy array of shape (n_samples, 256)
+from deepchemography import load_smiles_wae, encode_smiles, sample_smiles
+
+model, vocab = load_smiles_wae("path/to/checkpoint_dir")
+z = encode_smiles(["CCO", "c1ccccc1"], model, vocab)
+samples = sample_smiles(model, vocab, n_samples=10)
 ```
 
-### sample_from_latent(model, z=None, n_samples=10, temp=1.0, decode='greedy')
-Sample SMILES from the autoencoder latent space.
+### Peptide WAE
 
 ```python
-# Sample from Gaussian prior
-samples = sample_from_latent(model, z=None, n_samples=10, latent_std=1.0, temp=1.0)
+from deepchemography import load_peptide_model, encode_peptide, sample_peptides
 
-# Decode specific latent vectors
-samples = sample_from_latent(model, z=latent_vectors, temp=0.1, decode='greedy')
+model, vocab, config = load_peptide_model("path/to/checkpoint_dir")
+z = encode_peptide(["A L G", "G P R K"], model, vocab, config)
+samples = sample_peptides(model, vocab, config, n_samples=10)
 ```
 
-## Model Details
+## API Reference
 
-### Trained Model Checkpoints
+### SMILES LSTM Autoencoder
 
-The `models/autoencoder_v1/` directory contains:
-- `config.pt`: Model architecture configuration
-- `vocab.pt`: One-hot vocabulary (30 SMILES characters)
-- `model_best.pt`: Best model weights from training
-- `model_000.pt` to `model_050.pt`: Epoch checkpoints
-- `training.log`: Training metrics (loss, accuracy, learning rate)
+| Function / Class | Description |
+|---|---|
+| `LSTMAutoencoder` | Bidirectional LSTM autoencoder model |
+| `AutoencoderTrainer` | Training loop with LR scheduling and early stopping |
+| `OneHotVocab` | One-hot character vocabulary for SMILES |
+| `CharVocab` | Character-level vocabulary |
+| `get_parser` | Argparse-based configuration |
 
-### Training Details
+### SMILES WAE
 
-- **Dataset**: ChEMBL 33 (standardized, unique SMILES)
-- **Optimizer**: Adam
-- **Learning Rate**: 0.001 with ReduceLROnPlateau scheduler
-- **Batch Size**: 256
-- **Gradient Clipping**: 5.0
-- **Early Stopping**: 10 epochs patience
+| Function / Class | Description |
+|---|---|
+| `SmilesWAE` | GRU-based Wasserstein autoencoder model |
+| `SmilesWAETrainer` | Training loop with MMD loss |
+| `get_default_wae_config` | Default hyperparameters dict |
+| `load_smiles_wae` | Load trained model from checkpoint |
+| `encode_smiles` | Encode SMILES strings to latent vectors |
+| `decode_smiles_latent` | Decode latent vectors to SMILES |
+| `sample_smiles` | Sample novel SMILES from prior |
+| `interpolate_smiles` | Interpolate between two molecules |
+| `reconstruct_smiles` | Encode and decode (round-trip) |
+| `explore_smiles_neighborhood` | Generate neighbors by perturbing latent vectors |
 
-## Components Copied from ChemEidos
+### Peptide WAE
 
-This project contains only the necessary components for LSTM autoencoder functionality:
+| Function / Class | Description |
+|---|---|
+| `PeptideWAE` | GRU-based Wasserstein autoencoder model |
+| `PeptideVocab` | Space-separated amino acid vocabulary |
+| `load_peptide_model` | Load trained model from checkpoint |
+| `encode_peptide` | Encode peptide sequences to latent vectors |
+| `sample_peptides` | Sample novel peptides from prior |
+| `decode_latent` | Decode latent vectors to peptide sequences |
+| `interpolate_peptides` | Interpolate between two peptides |
+| `reconstruct_peptide` | Encode and decode (round-trip) |
 
-### Core Modules
-- `autoencoder/model.py`: LSTMAutoencoder implementation (344 lines)
-- `autoencoder/config.py`: Argument parser for configuration (91 lines)
-- `utils.py`: Vocabulary classes (OneHotVocab, CharVocab, SpecialTokens) (93 lines)
+### Shared Utilities
 
-### Model Files
-- All trained model checkpoints from `models/autoencoder_v1/`
-- Configuration and vocabulary files
+| Function / Class | Description |
+|---|---|
+| `Logger` | Training logger |
+| `setup_logging` | Configure logging |
+| `set_seed` | Set random seeds for reproducibility |
+| `read_smiles_csv` | Load SMILES from CSV files |
 
-### Documentation
-- Example notebook demonstrating all key functionalities
-- This README with usage instructions
+## Project Structure
 
-**Not included**: Training code, dataset utilities, evaluation metrics, other model types (VAE, AAE, etc.)
+```
+src/deepchemography/
+├── __init__.py              # Re-exports all public API
+├── utils.py                 # Backward compatibility shim
+├── script_utils.py          # CLI helpers: device parsing, argparse, CSV loading
+├── shared/
+│   ├── logging.py           # Logger, setup_logging
+│   ├── losses.py            # MMD and KL losses (shared by both WAEs)
+│   └── utils.py             # set_seed
+├── smiles/
+│   ├── model.py             # LSTMAutoencoder
+│   ├── wae.py               # SmilesWAE (GRU encoder/decoder, WordDropout)
+│   ├── wae_config.py        # Dict-based WAE config
+│   ├── wae_trainer.py       # SmilesWAETrainer
+│   ├── api.py               # High-level API (load, encode, decode, sample, interpolate)
+│   ├── vocab.py             # SpecialTokens, CharVocab, OneHotVocab
+│   ├── config.py            # Argparse-based LSTM config
+│   └── trainer.py           # AutoencoderTrainer, CircularBuffer
+└── peptides/
+    ├── model.py             # PeptideWAE
+    ├── api.py               # High-level API (load, encode, sample, decode, interpolate)
+    ├── vocab.py             # PeptideVocab
+    ├── encoder.py           # Bidirectional GRU encoder
+    ├── decoder.py           # GRU decoder with teacher forcing
+    ├── config.py            # Default hyperparameters dict
+    ├── losses.py            # Re-exports from shared/losses.py
+    └── utils.py             # to_tensor helper
+```
+
+## Training
+
+Training scripts and documentation are in `scripts/` and `docs/`. See [`docs/TRAINING.md`](docs/TRAINING.md) for detailed instructions on training each model, including dataset preparation, hyperparameter tuning, and checkpoint management.
 
 ## Citation
 
-If you use this autoencoder in your research, please cite:
+If you use DeepChemography in your research, please cite:
 
-```
-Xu, Y., Lin, K., Wang, S., Wang, L., Cai, C., Song, C., ... & Pei, J. (2017).
-Deep learning for molecular generation.
-Future medicinal chemistry, 11(6), 567-597.
+```bibtex
+@article{orlov2026chemspace,
+  title={ChemSpace Copilot: Agentic AI for Interactive Visualization and Exploration of Chemical Space},
+  author={Orlov, Alexander A. and Volkov, Maxim and Milova, Ekaterina S. and Horvath, Dragos and Varnek, Alexandre},
+  journal={ChemRxiv},
+  year={2026},
+  doi={10.26434/chemrxiv.15000527/v1}
+}
 ```
 
 ## License
 
-See [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-This code is extracted from the [ChemEidos](https://github.com/aorlov/ChemEidos) project, which implements multiple molecular generation models. The LSTM autoencoder component has been isolated for focused use in molecular encoding and sampling tasks.
+Developed at the [Laboratory of Chemoinformatics](https://infochim.u-strasbg.fr/), UMR 7140 CNRS, University of Strasbourg.
