@@ -400,13 +400,13 @@ def write_organism_chemographykit_landscapes(
             reverse=True,
         )
 
-        combined_chart = (
-            chart_density.properties(width=600, height=600)
-            | chart_class.properties(width=600, height=600)
-        ).resolve_scale(x="independent", y="independent", color="independent")
+        density_html = output_dir / "density.html"
+        chart_density.properties(width=600, height=600).save(str(density_html))
+        density_altair_html = output_dir / "density_altair.html"
+        shutil.copy2(density_html, density_altair_html)
 
         activity_class_html = output_dir / "activity_class.html"
-        combined_chart.save(str(activity_class_html))
+        chart_class.properties(width=600, height=600).save(str(activity_class_html))
         activity_class_altair_html = output_dir / "activity_class_altair.html"
         shutil.copy2(activity_class_html, activity_class_altair_html)
 
@@ -462,6 +462,8 @@ def write_organism_chemographykit_landscapes(
                 "active_fraction": float(n_active / n_total) if n_total else 0.0,
                 "best_node_id": best_node_idx + 1,
                 "best_node_grid": [node_grid[0], node_grid[1]],
+                "density_html": bundle_relative(density_html, bundle_dir),
+                "density_altair_html": bundle_relative(density_altair_html, bundle_dir),
                 "activity_html": bundle_relative(activity_html, bundle_dir),
                 "activity_png": bundle_relative(activity_png, bundle_dir),
                 "active_probability_plotly_html": bundle_relative(
@@ -527,7 +529,7 @@ Compatible peptide decoder: `{DECODER_REPO_ID}`.
 - `nodes.parquet`: aggregate node-level activity/density records
 - `sampler.json`: default sampling policy
 - `plots/`: rendered HTML plots
-- `plots/organisms/<organism>/`: notebook-style ChemographyKit Altair class landscapes and Plotly active-probability HTML/PNG landscapes
+- `plots/organisms/<organism>/`: separate ChemographyKit Altair density/activity landscapes and Plotly active-probability HTML/PNG landscapes
 - `plots/images/`: static image artifacts
 - `runtime/gtm.pkl.gz`: compressed GTM/scaler/config pickle for trusted agent sampling workflows
 
