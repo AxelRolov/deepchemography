@@ -8,6 +8,7 @@ import gzip
 import json
 import os
 import pickle
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import torch
 from safetensors.numpy import save_file
 
@@ -121,7 +123,9 @@ def grid_table(num_nodes: int) -> pd.DataFrame:
 
     x_grid, y_grid = np.meshgrid(range(1, axis_len + 1), range(1, axis_len + 1))
     node_ids = np.arange(1, num_nodes + 1).reshape((axis_len, axis_len)).T.ravel()
-    table = pd.DataFrame({"x": x_grid.ravel(), "y": y_grid.ravel(), "node_id": node_ids})
+    table = pd.DataFrame(
+        {"x": x_grid.ravel(), "y": y_grid.ravel(), "node_id": node_ids}
+    )
     return table.sort_values("node_id").reset_index(drop=True)
 
 
@@ -221,7 +225,9 @@ def weighted_activity_tables(
 
         organisms.append(organism)
         activity_mean.append(np.nan_to_num(mean, nan=-1.0).astype(np.float32))
-        activity_uncertainty.append(np.nan_to_num(uncertainty, nan=-1.0).astype(np.float32))
+        activity_uncertainty.append(
+            np.nan_to_num(uncertainty, nan=-1.0).astype(np.float32)
+        )
         node_support.append(support.astype(np.float32))
 
     if not rows:
@@ -230,13 +236,19 @@ def weighted_activity_tables(
     arrays = {
         "landscape.density": density_all,
         "landscape.activity_mean": np.vstack(activity_mean).astype(np.float32),
-        "landscape.activity_uncertainty": np.vstack(activity_uncertainty).astype(np.float32),
+        "landscape.activity_uncertainty": np.vstack(activity_uncertainty).astype(
+            np.float32
+        ),
         "landscape.node_support": np.vstack(node_support).astype(np.float32),
     }
-    return pd.concat(rows, ignore_index=True), arrays | {"organisms": np.asarray(organisms, dtype=object)}
+    return pd.concat(rows, ignore_index=True), arrays | {
+        "organisms": np.asarray(organisms, dtype=object)
+    }
 
 
-def build_tensor_payload(gtm_bundle: dict[str, Any], activity_arrays: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+def build_tensor_payload(
+    gtm_bundle: dict[str, Any], activity_arrays: dict[str, np.ndarray]
+) -> dict[str, np.ndarray]:
     gtm_model = gtm_bundle["model"]
     scaler = gtm_bundle["scaler"]
     tensors = {
@@ -247,7 +259,9 @@ def build_tensor_payload(gtm_bundle: dict[str, Any], activity_arrays: dict[str, 
         "gtm.beta": as_numpy(gtm_model.beta).reshape(1),
         "scaler.mean": as_numpy(scaler.mean_),
         "scaler.scale": as_numpy(scaler.scale_),
-        "grid.xy": grid_table(gtm_bundle["config"]["num_nodes"])[["x", "y"]].to_numpy(dtype=np.int32),
+        "grid.xy": grid_table(gtm_bundle["config"]["num_nodes"])[["x", "y"]].to_numpy(
+            dtype=np.int32
+        ),
     }
     for key, value in activity_arrays.items():
         if key == "organisms":
@@ -282,6 +296,169 @@ def copy_images(legacy_dir: Path, bundle_dir: Path) -> list[str]:
     return image_paths
 
 
+def slugify_organism(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug or "unknown"
+
+
+def display_organism(value: str) -> str:
+    return value.replace("_", " ")
+
+
+def bundle_relative(path: Path, bundle_dir: Path) -> str:
+    return path.relative_to(bundle_dir).as_posix()
+
+
+def build_hover_text(row: pd.Series) -> str:
+    activity = "NA" if pd.isna(row["activity_mean"]) else f"{row['activity_mean']:.3f}"
+    uncertainty = "NA" if pd.isna(row["uncertainty"]) else f"{row['uncertainty']:.3f}"
+    support = "NA" if pd.isna(row["n_observations"]) else f"{row['n_observations']:.2f}"
+    return (
+        f"Organism: {display_organism(str(row['organism']))}<br>"
+        f"Node: {int(row['node_id'])}<br>"
+        f"x: {int(row['x'])}, y: {int(row['y'])}<br>"
+        f"Activity mean: {activity}<br>"
+        f"Class: {row['activity_class']}<br>"
+        f"Uncertainty: {uncertainty}<br>"
+        f"Weighted observations: {support}"
+    )
+
+
+def pivot_organism_grid(
+    organism_df: pd.DataFrame,
+    value_col: str,
+) -> tuple[list[int], list[int], np.ndarray]:
+    x_values = sorted(int(value) for value in organism_df["x"].unique())
+    y_values = sorted(int(value) for value in organism_df["y"].unique())
+    grid = (
+        organism_df.pivot(index="y", columns="x", values=value_col)
+        .reindex(index=y_values, columns=x_values)
+        .to_numpy()
+    )
+    return x_values, y_values, grid
+
+
+def base_landscape_layout(fig: go.Figure, title: str) -> None:
+    fig.update_layout(
+        title={"text": title, "x": 0.5},
+        template="plotly_white",
+        width=900,
+        height=800,
+        margin={"l": 70, "r": 40, "t": 80, "b": 70},
+        xaxis_title="GTM x",
+        yaxis_title="GTM y",
+    )
+    fig.update_yaxes(autorange="reversed", scaleanchor="x", scaleratio=1)
+    fig.update_xaxes(constrain="domain")
+
+
+def write_plotly_artifacts(fig: go.Figure, html_path: Path, image_path: Path) -> None:
+    fig.write_html(str(html_path), include_plotlyjs="cdn", full_html=True)
+    fig.write_image(str(image_path), format="png", width=900, height=800, scale=2)
+
+
+def write_organism_plotly_landscapes(
+    nodes_df: pd.DataFrame, bundle_dir: Path
+) -> list[dict[str, str]]:
+    plot_entries: list[dict[str, str]] = []
+    organism_root = bundle_dir / "plots" / "organisms"
+
+    for organism, organism_df in sorted(
+        nodes_df.groupby("organism"), key=lambda item: slugify_organism(str(item[0]))
+    ):
+        organism = str(organism)
+        slug = slugify_organism(organism)
+        output_dir = organism_root / slug
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        plot_df = organism_df.copy()
+        plot_df["hover"] = plot_df.apply(build_hover_text, axis=1)
+        x_values, y_values, activity_grid = pivot_organism_grid(
+            plot_df, "activity_mean"
+        )
+        _, _, hover_grid = pivot_organism_grid(plot_df, "hover")
+
+        activity_fig = go.Figure(
+            data=[
+                go.Heatmap(
+                    x=x_values,
+                    y=y_values,
+                    z=activity_grid,
+                    zmin=0,
+                    zmax=1,
+                    colorscale="RdYlBu_r",
+                    colorbar={"title": "Activity"},
+                    text=hover_grid,
+                    hoverinfo="text",
+                )
+            ]
+        )
+        base_landscape_layout(
+            activity_fig,
+            f"{display_organism(organism)} activity landscape",
+        )
+        activity_html = output_dir / "activity.html"
+        activity_png = output_dir / "activity.png"
+        write_plotly_artifacts(activity_fig, activity_html, activity_png)
+
+        class_map = {
+            "inactive_enriched": 0,
+            "insufficient_support": 1,
+            "active_enriched": 2,
+        }
+        plot_df["activity_class_code"] = (
+            plot_df["activity_class"].map(class_map).fillna(1)
+        )
+        _, _, class_grid = pivot_organism_grid(plot_df, "activity_class_code")
+        class_fig = go.Figure(
+            data=[
+                go.Heatmap(
+                    x=x_values,
+                    y=y_values,
+                    z=class_grid,
+                    zmin=0,
+                    zmax=2,
+                    colorscale=[
+                        [0.0, "#2f6f9f"],
+                        [0.333333, "#2f6f9f"],
+                        [0.333334, "#d1d5db"],
+                        [0.666666, "#d1d5db"],
+                        [0.666667, "#b73535"],
+                        [1.0, "#b73535"],
+                    ],
+                    colorbar={
+                        "title": "Class",
+                        "tickmode": "array",
+                        "tickvals": [0, 1, 2],
+                        "ticktext": ["inactive", "insufficient", "active"],
+                    },
+                    text=hover_grid,
+                    hoverinfo="text",
+                )
+            ]
+        )
+        base_landscape_layout(
+            class_fig,
+            f"{display_organism(organism)} activity class landscape",
+        )
+        class_html = output_dir / "activity_class.html"
+        class_png = output_dir / "activity_class.png"
+        write_plotly_artifacts(class_fig, class_html, class_png)
+
+        plot_entries.append(
+            {
+                "organism": organism,
+                "slug": slug,
+                "activity_html": bundle_relative(activity_html, bundle_dir),
+                "activity_png": bundle_relative(activity_png, bundle_dir),
+                "activity_class_html": bundle_relative(class_html, bundle_dir),
+                "activity_class_png": bundle_relative(class_png, bundle_dir),
+            }
+        )
+
+    return plot_entries
+
+
 def copy_gtm_runtime_model(legacy_dir: Path, bundle_dir: Path) -> None:
     legacy_path = legacy_dir / "gtm_wae_model.pkl"
     if not legacy_path.exists():
@@ -298,7 +475,9 @@ def copy_gtm_runtime_model(legacy_dir: Path, bundle_dir: Path) -> None:
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def write_dataset_card(bundle_root: Path, repo_id: str, organisms: list[str]) -> None:
@@ -331,6 +510,7 @@ Compatible peptide decoder: `{DECODER_REPO_ID}`.
 - `nodes.parquet`: aggregate node-level activity/density records
 - `sampler.json`: default sampling policy
 - `plots/`: rendered HTML plots
+- `plots/organisms/<organism>/`: per-organism Plotly HTML and PNG activity landscapes
 - `plots/images/`: static image artifacts
 - `runtime/gtm.pkl.gz`: compressed GTM/scaler/config pickle for trusted agent sampling workflows
 - `legacy/gtm.pkl.gz`: backward-compatible copy of the same GTM runtime payload
@@ -353,10 +533,14 @@ def export_bundle(args: argparse.Namespace) -> Path:
     legacy_dir = (root / args.legacy_dir).resolve()
     bundle_root = (root / args.bundle_root).resolve()
     bundle_dir = bundle_root / "landscapes" / LANDSCAPE_ID
+    if bundle_dir.exists():
+        shutil.rmtree(bundle_dir)
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
     gtm_bundle = load_legacy_bundle(legacy_dir / "gtm_wae_model.pkl")
-    activity_csv = Path(args.activity_csv).expanduser().resolve() if args.activity_csv else None
+    activity_csv = (
+        Path(args.activity_csv).expanduser().resolve() if args.activity_csv else None
+    )
     if activity_csv is None:
         raise SystemExit("Provide --activity-csv or set DBAASP_ACTIVITY_CSV.")
 
@@ -365,7 +549,9 @@ def export_bundle(args: argparse.Namespace) -> Path:
         model_path=(root / args.model_path).resolve(),
         device=args.device,
     )
-    responsibilities = project_activity(latents, gtm_bundle["scaler"], gtm_bundle["model"])
+    responsibilities = project_activity(
+        latents, gtm_bundle["scaler"], gtm_bundle["model"]
+    )
     nodes_df, activity_arrays = weighted_activity_tables(
         df_activity,
         responsibilities,
@@ -375,10 +561,12 @@ def export_bundle(args: argparse.Namespace) -> Path:
     organisms = [str(x) for x in activity_arrays["organisms"].tolist()]
 
     nodes_df.to_parquet(bundle_dir / "nodes.parquet", index=False)
-    save_file(build_tensor_payload(gtm_bundle, activity_arrays), str(bundle_dir / "landscape.safetensors"))
+    tensor_payload = build_tensor_payload(gtm_bundle, activity_arrays)
+    save_file(tensor_payload, str(bundle_dir / "landscape.safetensors"))
 
     config = gtm_bundle["config"]
     image_paths = copy_images(legacy_dir, bundle_dir)
+    organism_plot_paths = write_organism_plotly_landscapes(nodes_df, bundle_dir)
 
     landscape = {
         "schema_version": "1.0.0",
@@ -394,7 +582,10 @@ def export_bundle(args: argparse.Namespace) -> Path:
         "condition_dim": 2,
         "gtm": {
             "num_nodes": int(config["num_nodes"]),
-            "grid_shape": [int(np.sqrt(config["num_nodes"])), int(np.sqrt(config["num_nodes"]))],
+            "grid_shape": [
+                int(np.sqrt(config["num_nodes"])),
+                int(np.sqrt(config["num_nodes"])),
+            ],
             "num_basis_functions": int(config["num_basis_functions"]),
             "basis_width": float(config["basis_width"]),
             "reg_coeff": float(config["reg_coeff"]),
@@ -419,10 +610,11 @@ def export_bundle(args: argparse.Namespace) -> Path:
             "density_plot": "plots/density.html",
             "activity_plot": "plots/activity.html",
             "images": image_paths,
+            "organism_plots": organism_plot_paths,
             "gtm_runtime": "runtime/gtm.pkl.gz",
             "legacy_gtm": "legacy/gtm.pkl.gz",
         },
-        "tensor_names": sorted(build_tensor_payload(gtm_bundle, activity_arrays).keys()),
+        "tensor_names": sorted(tensor_payload.keys()),
     }
     write_json(bundle_dir / "landscape.json", landscape)
 

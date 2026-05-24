@@ -48,6 +48,7 @@ dev = [
     "ipykernel",
     "pytest>=7.0.0",
     "huggingface_hub>=0.24.0",
+    "kaleido==0.2.1",
     "pyarrow>=14.0.0",
     "safetensors>=0.4.0",
 ]
