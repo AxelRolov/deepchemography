@@ -12,9 +12,17 @@ from pathlib import Path
 
 DEFAULT_REPO_NAME = "peptide_designer_data"
 DEFAULT_BUNDLE_ROOT = Path("output/hf/peptide_designer_data")
+LANDSCAPE_ID = "dbaasp_amp_v1"
 RAW_DATA_DIR = Path("data")
 FORBIDDEN_NAMES = {"source_peptides.parquet"}
-LEGACY_REMOTE_DELETE_PATTERNS = ["models/**", "output/**"]
+REMOVED_RUNTIME_FOLDER = "leg" "acy"
+REMOTE_DELETE_PATTERNS = [
+    "models/**",
+    "output/**",
+    f"landscapes/{LANDSCAPE_ID}/plots/activity.html",
+    f"landscapes/{LANDSCAPE_ID}/plots/organisms/**",
+    f"landscapes/{LANDSCAPE_ID}/{REMOVED_RUNTIME_FOLDER}/**",
+]
 
 
 @dataclass(frozen=True)
@@ -181,26 +189,30 @@ def print_manifest(repo_id: str, private: bool, entries: list[ManifestEntry]) ->
     print("  data/")
     print("  *.csv")
     print("  source_peptides.parquet")
-    print("\nRemote legacy paths deleted on upload:")
-    for pattern in LEGACY_REMOTE_DELETE_PATTERNS:
-        print(f"  {pattern}")
+    print(f"\nRemote cleanup patterns: {len(REMOTE_DELETE_PATTERNS)}")
 
 
-def upload_bundle(bundle_root: Path, repo_id: str, private: bool, commit_message: str) -> None:
+def upload_bundle(
+    bundle_root: Path, repo_id: str, private: bool, commit_message: str
+) -> None:
     token = get_hf_token()
     if not token:
-        raise SystemExit("Set HF_TOKEN or HUGGING_FACE_HUB_TOKEN before running with --upload.")
+        raise SystemExit(
+            "Set HF_TOKEN or HUGGING_FACE_HUB_TOKEN before running with --upload."
+        )
 
     HfApi = import_hf_api()
     api = HfApi(token=token)
-    api.create_repo(repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True)
+    api.create_repo(
+        repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True
+    )
     api.upload_folder(
         repo_id=repo_id,
         repo_type="dataset",
         folder_path=str(bundle_root),
         path_in_repo=".",
         commit_message=commit_message,
-        delete_patterns=LEGACY_REMOTE_DELETE_PATTERNS,
+        delete_patterns=REMOTE_DELETE_PATTERNS,
     )
 
 

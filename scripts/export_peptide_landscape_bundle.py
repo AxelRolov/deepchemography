@@ -8,7 +8,6 @@ import gzip
 import json
 import os
 import pickle
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -18,6 +17,16 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import torch
+from chemographykit.plots.altair_landscapes import (
+    altair_discrete_class_landscape,
+    altair_discrete_density_landscape,
+)
+from chemographykit.plots.plotly_landscapes import plotly_smooth_density_landscape
+from chemographykit.utils.classification import (
+    class_density_to_table,
+    get_class_density_matrix,
+)
+from chemographykit.utils.density import density_to_table, get_density_matrix
 from safetensors.numpy import save_file
 
 from deepchemography.peptides import encode_peptide, load_peptide_model
@@ -27,7 +36,7 @@ ORIGINAL_TORCH_LOAD = torch.load
 LANDSCAPE_ID = "dbaasp_amp_v1"
 DATASET_REPO_ID = "axelrolov/peptide_designer_data"
 DECODER_REPO_ID = "axelrolov/wae_peptides"
-DEFAULT_LEGACY_DIR = Path("output/sampling_analysis/peptides_gtm_analysis")
+DEFAULT_ARTIFACT_DIR = Path("output/sampling_analysis/peptides_gtm_analysis")
 DEFAULT_BUNDLE_ROOT = Path("output/hf/peptide_designer_data")
 AMINO_ACID_ALPHABET = list("ACDEFGHIKLMNPQRSTVWY")
 
@@ -42,10 +51,10 @@ def parse_args() -> argparse.Namespace:
         help="External local DBAASP-style activity CSV. Defaults to DBAASP_ACTIVITY_CSV.",
     )
     parser.add_argument(
-        "--legacy-dir",
+        "--artifact-dir",
         type=Path,
-        default=DEFAULT_LEGACY_DIR,
-        help="Directory containing existing GTM pickle and HTML plots.",
+        default=DEFAULT_ARTIFACT_DIR,
+        help="Directory containing the local GTM pickle, images, and HTML plots.",
     )
     parser.add_argument(
         "--bundle-root",
@@ -75,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Minimum weighted node support for assigning activity class.",
     )
+    parser.add_argument(
+        "--min-organism-data-points",
+        type=int,
+        default=500,
+        help="Minimum non-null organism labels for notebook-style landscape plots.",
+    )
     return parser.parse_args()
 
 
@@ -88,7 +103,7 @@ def torch_load_cpu(*args: Any, **kwargs: Any) -> Any:
     return ORIGINAL_TORCH_LOAD(*args, **kwargs)
 
 
-def load_legacy_bundle(path: Path) -> dict[str, Any]:
+def load_gtm_bundle(path: Path) -> dict[str, Any]:
     original_load = torch.load
     torch.load = torch_load_cpu
     try:
@@ -100,7 +115,7 @@ def load_legacy_bundle(path: Path) -> dict[str, Any]:
     required = {"model", "scaler", "config"}
     missing = required.difference(bundle)
     if missing:
-        raise ValueError(f"Legacy GTM bundle is missing keys: {sorted(missing)}")
+        raise ValueError(f"GTM bundle is missing keys: {sorted(missing)}")
 
     model = bundle["model"]
     if hasattr(model, "to"):
@@ -270,24 +285,11 @@ def build_tensor_payload(
     return tensors
 
 
-def copy_plots(legacy_dir: Path, bundle_dir: Path) -> None:
-    plots_dir = bundle_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    plot_map = {
-        "gtm_dbaasp_density.html": "density.html",
-        "gtm_dbaasp_activity_landscapes.html": "activity.html",
-    }
-    for source_name, target_name in plot_map.items():
-        source = legacy_dir / source_name
-        if source.exists():
-            shutil.copy2(source, plots_dir / target_name)
-
-
-def copy_images(legacy_dir: Path, bundle_dir: Path) -> list[str]:
+def copy_images(artifact_dir: Path, bundle_dir: Path) -> list[str]:
     image_dir = bundle_dir / "plots" / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
     image_paths: list[str] = []
-    for source in sorted(legacy_dir.glob("*")):
+    for source in sorted(artifact_dir.glob("*")):
         if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".svg"}:
             continue
         target = image_dir / source.name
@@ -296,182 +298,197 @@ def copy_images(legacy_dir: Path, bundle_dir: Path) -> list[str]:
     return image_paths
 
 
-def slugify_organism(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
-    return slug or "unknown"
-
-
-def display_organism(value: str) -> str:
-    return value.replace("_", " ")
-
-
 def bundle_relative(path: Path, bundle_dir: Path) -> str:
     return path.relative_to(bundle_dir).as_posix()
 
 
-def build_hover_text(row: pd.Series) -> str:
-    activity = "NA" if pd.isna(row["activity_mean"]) else f"{row['activity_mean']:.3f}"
-    uncertainty = "NA" if pd.isna(row["uncertainty"]) else f"{row['uncertainty']:.3f}"
-    support = "NA" if pd.isna(row["n_observations"]) else f"{row['n_observations']:.2f}"
-    return (
-        f"Organism: {display_organism(str(row['organism']))}<br>"
-        f"Node: {int(row['node_id'])}<br>"
-        f"x: {int(row['x'])}, y: {int(row['y'])}<br>"
-        f"Activity mean: {activity}<br>"
-        f"Class: {row['activity_class']}<br>"
-        f"Uncertainty: {uncertainty}<br>"
-        f"Weighted observations: {support}"
-    )
-
-
-def pivot_organism_grid(
-    organism_df: pd.DataFrame,
-    value_col: str,
-) -> tuple[list[int], list[int], np.ndarray]:
-    x_values = sorted(int(value) for value in organism_df["x"].unique())
-    y_values = sorted(int(value) for value in organism_df["y"].unique())
-    grid = (
-        organism_df.pivot(index="y", columns="x", values=value_col)
-        .reindex(index=y_values, columns=x_values)
-        .to_numpy()
-    )
-    return x_values, y_values, grid
-
-
-def base_landscape_layout(fig: go.Figure, title: str) -> None:
-    fig.update_layout(
-        title={"text": title, "x": 0.5},
-        template="plotly_white",
-        width=900,
-        height=800,
-        margin={"l": 70, "r": 40, "t": 80, "b": 70},
-        xaxis_title="GTM x",
-        yaxis_title="GTM y",
-    )
-    fig.update_yaxes(autorange="reversed", scaleanchor="x", scaleratio=1)
-    fig.update_xaxes(constrain="domain")
-
-
 def write_plotly_artifacts(fig: go.Figure, html_path: Path, image_path: Path) -> None:
     fig.write_html(str(html_path), include_plotlyjs="cdn", full_html=True)
-    fig.write_image(str(image_path), format="png", width=900, height=800, scale=2)
+    fig.write_image(str(image_path), format="png", width=800, height=800, scale=2)
 
 
-def write_organism_plotly_landscapes(
-    nodes_df: pd.DataFrame, bundle_dir: Path
-) -> list[dict[str, str]]:
-    plot_entries: list[dict[str, str]] = []
+def write_dbaasp_density_landscape(
+    responsibilities: np.ndarray,
+    bundle_dir: Path,
+) -> dict[str, str]:
+    plots_dir = bundle_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    density_dbaasp_vec = get_density_matrix(responsibilities)
+    density_table_dbaasp = density_to_table(
+        density_dbaasp_vec,
+        node_threshold=0.01,
+        output_csv_file=None,
+    )
+
+    fig_dbaasp_density = plotly_smooth_density_landscape(
+        density_table_dbaasp,
+        node_threshold=0.01,
+        use_smooth=True,
+        title="DBAASP Peptides — Density on WAE GTM",
+        width=800,
+        height=800,
+        background_color="white",
+    )
+
+    density_html = plots_dir / "density.html"
+    density_png = plots_dir / "density.png"
+    write_plotly_artifacts(fig_dbaasp_density, density_html, density_png)
+    return {
+        "html": bundle_relative(density_html, bundle_dir),
+        "png": bundle_relative(density_png, bundle_dir),
+    }
+
+
+def write_organism_chemographykit_landscapes(
+    df_dbaasp: pd.DataFrame,
+    resp_dbaasp: np.ndarray,
+    activity_cols: list[str],
+    bundle_dir: Path,
+    min_data_points: int,
+) -> list[dict[str, Any]]:
+    plot_entries: list[dict[str, Any]] = []
     organism_root = bundle_dir / "plots" / "organisms"
+    selected_organisms = [
+        col for col in activity_cols if df_dbaasp[col].notna().sum() >= min_data_points
+    ]
+    classes_str = ["Inactive", "Active"]
 
-    for organism, organism_df in sorted(
-        nodes_df.groupby("organism"), key=lambda item: slugify_organism(str(item[0]))
-    ):
-        organism = str(organism)
-        slug = slugify_organism(organism)
+    for organism in selected_organisms:
+        mask = df_dbaasp[organism].notna()
+        n_total = int(mask.sum())
+        n_active = int((df_dbaasp.loc[mask, organism] == 1.0).sum())
+        slug = organism.lower().replace(" ", "_")
         output_dir = organism_root / slug
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        plot_df = organism_df.copy()
-        plot_df["hover"] = plot_df.apply(build_hover_text, axis=1)
-        x_values, y_values, activity_grid = pivot_organism_grid(
-            plot_df, "activity_mean"
-        )
-        _, _, hover_grid = pivot_organism_grid(plot_df, "hover")
+        resp_subset = resp_dbaasp[mask.values]
+        class_labels = [
+            "Active" if v == 1.0 else "Inactive"
+            for v in df_dbaasp.loc[mask, organism].values
+        ]
 
-        activity_fig = go.Figure(
-            data=[
-                go.Heatmap(
-                    x=x_values,
-                    y=y_values,
-                    z=activity_grid,
-                    zmin=0,
-                    zmax=1,
-                    colorscale="RdYlBu_r",
-                    colorbar={"title": "Activity"},
-                    text=hover_grid,
-                    hoverinfo="text",
-                )
-            ]
+        density, class_density, class_prob = get_class_density_matrix(
+            resp_subset,
+            class_labels=class_labels,
+            class_name=classes_str,
+            normalize=True,
         )
-        base_landscape_layout(
-            activity_fig,
-            f"{display_organism(organism)} activity landscape",
+
+        source_alt = density_to_table(density=density, node_threshold=0.1)
+        source_alt_class = class_density_to_table(
+            density=density,
+            class_density=class_density,
+            class_prob=class_prob,
+            class_name=classes_str,
+            normalized=True,
+            node_threshold=0.1,
         )
+
+        chart_density = altair_discrete_density_landscape(
+            source_alt, title=f"{organism} — Density"
+        )
+        chart_class = altair_discrete_class_landscape(
+            source_alt_class,
+            title=f"{organism} (Inactive=0, Active=1)",
+            first_class_density_column_name=classes_str[0] + "_norm_density",
+            first_class_prob_column_name=classes_str[0] + "_norm_prob",
+            second_class_density_column_name=classes_str[1] + "_norm_density",
+            second_class_prob_column_name=classes_str[1] + "_norm_prob",
+            use_density=True,
+            colorset="redblue",
+            reverse=True,
+        )
+
+        combined_chart = (
+            chart_density.properties(width=600, height=600)
+            | chart_class.properties(width=600, height=600)
+        ).resolve_scale(x="independent", y="independent", color="independent")
+
+        activity_class_html = output_dir / "activity_class.html"
+        combined_chart.save(str(activity_class_html))
+        activity_class_altair_html = output_dir / "activity_class_altair.html"
+        shutil.copy2(activity_class_html, activity_class_altair_html)
+
+        active_idx = classes_str.index("Active")
+        active_prob = class_prob[:, active_idx]
+        density_norm = density / (density.max() + 1e-12)
+        score = active_prob * density_norm
+
+        if np.any(density > 0):
+            dens_thresh = np.percentile(density[density > 0], 50)
+            score = np.where(density > dens_thresh, score, -np.inf)
+
+        best_node_idx = int(np.argmax(score))
+        active_prob_table = density_to_table(active_prob, node_threshold=0.0)
+        best_row = active_prob_table.loc[
+            active_prob_table["nodes"] == best_node_idx + 1
+        ].iloc[0]
+        node_grid = (int(best_row["x"]), int(best_row["y"]))
+
+        fig_active = plotly_smooth_density_landscape(
+            active_prob_table,
+            node_threshold=0.0,
+            use_smooth=True,
+            title=f"{organism} - Active Probability Landscape",
+            width=800,
+            height=800,
+            background_color="white",
+        )
+        fig_active.add_trace(
+            go.Scatter(
+                x=[node_grid[0]],
+                y=[node_grid[1]],
+                mode="markers",
+                marker=dict(size=12, color="blue", symbol="star"),
+                name="Selected node",
+            )
+        )
+
         activity_html = output_dir / "activity.html"
         activity_png = output_dir / "activity.png"
-        write_plotly_artifacts(activity_fig, activity_html, activity_png)
-
-        class_map = {
-            "inactive_enriched": 0,
-            "insufficient_support": 1,
-            "active_enriched": 2,
-        }
-        plot_df["activity_class_code"] = (
-            plot_df["activity_class"].map(class_map).fillna(1)
-        )
-        _, _, class_grid = pivot_organism_grid(plot_df, "activity_class_code")
-        class_fig = go.Figure(
-            data=[
-                go.Heatmap(
-                    x=x_values,
-                    y=y_values,
-                    z=class_grid,
-                    zmin=0,
-                    zmax=2,
-                    colorscale=[
-                        [0.0, "#2f6f9f"],
-                        [0.333333, "#2f6f9f"],
-                        [0.333334, "#d1d5db"],
-                        [0.666666, "#d1d5db"],
-                        [0.666667, "#b73535"],
-                        [1.0, "#b73535"],
-                    ],
-                    colorbar={
-                        "title": "Class",
-                        "tickmode": "array",
-                        "tickvals": [0, 1, 2],
-                        "ticktext": ["inactive", "insufficient", "active"],
-                    },
-                    text=hover_grid,
-                    hoverinfo="text",
-                )
-            ]
-        )
-        base_landscape_layout(
-            class_fig,
-            f"{display_organism(organism)} activity class landscape",
-        )
-        class_html = output_dir / "activity_class.html"
-        class_png = output_dir / "activity_class.png"
-        write_plotly_artifacts(class_fig, class_html, class_png)
+        write_plotly_artifacts(fig_active, activity_html, activity_png)
+        active_probability_html = output_dir / "active_probability_plotly.html"
+        active_probability_png = output_dir / "active_probability_plotly.png"
+        shutil.copy2(activity_html, active_probability_html)
+        shutil.copy2(activity_png, active_probability_png)
 
         plot_entries.append(
             {
                 "organism": organism,
                 "slug": slug,
+                "n_total": n_total,
+                "n_active": n_active,
+                "active_fraction": float(n_active / n_total) if n_total else 0.0,
+                "best_node_id": best_node_idx + 1,
+                "best_node_grid": [node_grid[0], node_grid[1]],
                 "activity_html": bundle_relative(activity_html, bundle_dir),
                 "activity_png": bundle_relative(activity_png, bundle_dir),
-                "activity_class_html": bundle_relative(class_html, bundle_dir),
-                "activity_class_png": bundle_relative(class_png, bundle_dir),
+                "active_probability_plotly_html": bundle_relative(
+                    active_probability_html, bundle_dir
+                ),
+                "active_probability_plotly_png": bundle_relative(
+                    active_probability_png, bundle_dir
+                ),
+                "activity_class_html": bundle_relative(activity_class_html, bundle_dir),
+                "activity_class_altair_html": bundle_relative(
+                    activity_class_altair_html, bundle_dir
+                ),
             }
         )
 
     return plot_entries
 
 
-def copy_gtm_runtime_model(legacy_dir: Path, bundle_dir: Path) -> None:
-    legacy_path = legacy_dir / "gtm_wae_model.pkl"
-    if not legacy_path.exists():
-        raise FileNotFoundError(f"Missing GTM pickle: {legacy_path}")
+def copy_gtm_runtime_model(artifact_dir: Path, bundle_dir: Path) -> None:
+    runtime_path = artifact_dir / "gtm_wae_model.pkl"
+    if not runtime_path.exists():
+        raise FileNotFoundError(f"Missing GTM pickle: {runtime_path}")
 
-    targets = [
-        bundle_dir / "runtime" / "gtm.pkl.gz",
-        bundle_dir / "legacy" / "gtm.pkl.gz",
-    ]
-    for target in targets:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with legacy_path.open("rb") as src, gzip.open(target, "wb") as dst:
-            shutil.copyfileobj(src, dst)
+    target = bundle_dir / "runtime" / "gtm.pkl.gz"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with runtime_path.open("rb") as src, gzip.open(target, "wb") as dst:
+        shutil.copyfileobj(src, dst)
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -510,10 +527,9 @@ Compatible peptide decoder: `{DECODER_REPO_ID}`.
 - `nodes.parquet`: aggregate node-level activity/density records
 - `sampler.json`: default sampling policy
 - `plots/`: rendered HTML plots
-- `plots/organisms/<organism>/`: per-organism Plotly HTML and PNG activity landscapes
+- `plots/organisms/<organism>/`: notebook-style ChemographyKit Altair class landscapes and Plotly active-probability HTML/PNG landscapes
 - `plots/images/`: static image artifacts
 - `runtime/gtm.pkl.gz`: compressed GTM/scaler/config pickle for trusted agent sampling workflows
-- `legacy/gtm.pkl.gz`: backward-compatible copy of the same GTM runtime payload
 
 Activity organisms included: {len(organisms)}.
 
@@ -530,14 +546,14 @@ Pirtskhalava M, Amstrong AA, Grigolava M, Chubinidze M, Alimbarashvili E, Vishne
 
 def export_bundle(args: argparse.Namespace) -> Path:
     root = project_root()
-    legacy_dir = (root / args.legacy_dir).resolve()
+    artifact_dir = (root / args.artifact_dir).resolve()
     bundle_root = (root / args.bundle_root).resolve()
     bundle_dir = bundle_root / "landscapes" / LANDSCAPE_ID
     if bundle_dir.exists():
         shutil.rmtree(bundle_dir)
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
-    gtm_bundle = load_legacy_bundle(legacy_dir / "gtm_wae_model.pkl")
+    gtm_bundle = load_gtm_bundle(artifact_dir / "gtm_wae_model.pkl")
     activity_csv = (
         Path(args.activity_csv).expanduser().resolve() if args.activity_csv else None
     )
@@ -565,8 +581,15 @@ def export_bundle(args: argparse.Namespace) -> Path:
     save_file(tensor_payload, str(bundle_dir / "landscape.safetensors"))
 
     config = gtm_bundle["config"]
-    image_paths = copy_images(legacy_dir, bundle_dir)
-    organism_plot_paths = write_organism_plotly_landscapes(nodes_df, bundle_dir)
+    image_paths = copy_images(artifact_dir, bundle_dir)
+    density_plot_paths = write_dbaasp_density_landscape(responsibilities, bundle_dir)
+    organism_plot_paths = write_organism_chemographykit_landscapes(
+        df_activity,
+        responsibilities,
+        activity_cols,
+        bundle_dir,
+        min_data_points=args.min_organism_data_points,
+    )
 
     landscape = {
         "schema_version": "1.0.0",
@@ -601,18 +624,19 @@ def export_bundle(args: argparse.Namespace) -> Path:
             "type": "binary antimicrobial activity",
             "units": "active/inactive class",
             "organisms": organisms,
+            "plotted_organisms": [entry["organism"] for entry in organism_plot_paths],
+            "plot_min_data_points": int(args.min_organism_data_points),
             "missing_value": -1.0,
         },
         "files": {
             "tensors": "landscape.safetensors",
             "nodes": "nodes.parquet",
             "sampler": "sampler.json",
-            "density_plot": "plots/density.html",
-            "activity_plot": "plots/activity.html",
+            "density_plot": density_plot_paths["html"],
+            "density_plot_png": density_plot_paths["png"],
             "images": image_paths,
             "organism_plots": organism_plot_paths,
             "gtm_runtime": "runtime/gtm.pkl.gz",
-            "legacy_gtm": "legacy/gtm.pkl.gz",
         },
         "tensor_names": sorted(tensor_payload.keys()),
     }
@@ -636,8 +660,7 @@ def export_bundle(args: argparse.Namespace) -> Path:
     }
     write_json(bundle_dir / "sampler.json", sampler)
 
-    copy_plots(legacy_dir, bundle_dir)
-    copy_gtm_runtime_model(legacy_dir, bundle_dir)
+    copy_gtm_runtime_model(artifact_dir, bundle_dir)
     write_dataset_card(bundle_root, DATASET_REPO_ID, organisms)
 
     print(f"Exported structured landscape bundle to {bundle_dir}")
