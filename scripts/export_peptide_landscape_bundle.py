@@ -269,6 +269,19 @@ def copy_plots(legacy_dir: Path, bundle_dir: Path) -> None:
             shutil.copy2(source, plots_dir / target_name)
 
 
+def copy_images(legacy_dir: Path, bundle_dir: Path) -> list[str]:
+    image_dir = bundle_dir / "plots" / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    image_paths: list[str] = []
+    for source in sorted(legacy_dir.glob("*")):
+        if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".svg"}:
+            continue
+        target = image_dir / source.name
+        shutil.copy2(source, target)
+        image_paths.append(str(target.relative_to(bundle_dir)))
+    return image_paths
+
+
 def copy_gtm_runtime_model(legacy_dir: Path, bundle_dir: Path) -> None:
     legacy_path = legacy_dir / "gtm_wae_model.pkl"
     if not legacy_path.exists():
@@ -318,6 +331,7 @@ Compatible peptide decoder: `{DECODER_REPO_ID}`.
 - `nodes.parquet`: aggregate node-level activity/density records
 - `sampler.json`: default sampling policy
 - `plots/`: rendered HTML plots
+- `plots/images/`: static image artifacts
 - `runtime/gtm.pkl.gz`: compressed GTM/scaler/config pickle for trusted agent sampling workflows
 - `legacy/gtm.pkl.gz`: backward-compatible copy of the same GTM runtime payload
 
@@ -364,6 +378,8 @@ def export_bundle(args: argparse.Namespace) -> Path:
     save_file(build_tensor_payload(gtm_bundle, activity_arrays), str(bundle_dir / "landscape.safetensors"))
 
     config = gtm_bundle["config"]
+    image_paths = copy_images(legacy_dir, bundle_dir)
+
     landscape = {
         "schema_version": "1.0.0",
         "landscape_id": LANDSCAPE_ID,
@@ -402,6 +418,7 @@ def export_bundle(args: argparse.Namespace) -> Path:
             "sampler": "sampler.json",
             "density_plot": "plots/density.html",
             "activity_plot": "plots/activity.html",
+            "images": image_paths,
             "gtm_runtime": "runtime/gtm.pkl.gz",
             "legacy_gtm": "legacy/gtm.pkl.gz",
         },
